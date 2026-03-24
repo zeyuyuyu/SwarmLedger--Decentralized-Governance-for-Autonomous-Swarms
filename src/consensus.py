@@ -1,28 +1,60 @@
+import time
+import hashlib
 import random
 
-class ConsensusProtocol:
-    def __init__(self, swarm_size):
-        self.swarm_size = swarm_size
-        self.proposal_quorum = int(swarm_size * 0.67) # 2/3 majority
-        self.commit_quorum = int(swarm_size * 0.67) # 2/3 majority
-        self.proposals = {}
-        self.commitments = {}
+class Validator:
+    def __init__(self, address, stake):
+        self.address = address
+        self.stake = stake
+        self.last_block_time = 0
 
-    def propose(self, node_id, proposal):
-        if len(self.proposals) < self.proposal_quorum:
-            self.proposals[node_id] = proposal
-            return True
-        else:
+    def validate_block(self, block):
+        # Validate block timestamp and previous hash
+        if block['timestamp'] <= self.last_block_time:
+            return False
+        if block['prev_hash'] != self.compute_hash(self.last_block):
             return False
 
-    def commit(self, node_id, proposal_hash):
-        if proposal_hash in self.proposals and len(self.commitments.get(proposal_hash, [])) < self.commit_quorum:
-            self.commitments.setdefault(proposal_hash, []).append(node_id)
-            if len(self.commitments[proposal_hash]) >= self.commit_quorum:
-                return self.proposals[proposal_hash]
-        return None
+        # Validate block proposer
+        if block['proposer'] != self.address:
+            return False
 
-    def validate(self, node_id, proposal):
-        # Validate proposal against current state
-        # Return True if valid, False otherwise
-        return random.choice([True, False])
+        # Update validator state
+        self.last_block_time = block['timestamp']
+        self.last_block = block
+        return True
+
+    def compute_hash(self, block):
+        block_string = str(block)
+        return hashlib.sha256(block_string.encode()).hexdigest()
+
+class ConsensusManager:
+    def __init__(self):
+        self.validators = []
+        self.chain = []
+
+    def add_validator(self, validator):
+        self.validators.append(validator)
+
+    def propose_block(self):
+        # Select a validator to propose the next block
+        validator = random.choice(self.validators)
+
+        # Create the new block
+        block = {
+            'timestamp': time.time(),
+            'proposer': validator.address,
+            'transactions': [],
+            'prev_hash': self.compute_hash(self.chain[-1])
+        }
+
+        # Validate the block
+        if validator.validate_block(block):
+            self.chain.append(block)
+            return block
+        else:
+            return None
+
+    def compute_hash(self, block):
+        block_string = str(block)
+        return hashlib.sha256(block_string.encode()).hexdigest()
