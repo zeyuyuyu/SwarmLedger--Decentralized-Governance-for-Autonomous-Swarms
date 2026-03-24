@@ -1,60 +1,38 @@
-import time
-import hashlib
 import random
+import time
 
-class Validator:
-    def __init__(self, address, stake):
-        self.address = address
-        self.stake = stake
-        self.last_block_time = 0
+class SwarmConsensus:
+    def __init__(self, swarm_size, decision_threshold):
+        self.swarm_size = swarm_size
+        self.decision_threshold = decision_threshold
+        self.swarm_state = [0] * swarm_size
+        self.last_update_time = time.time()
 
-    def validate_block(self, block):
-        # Validate block timestamp and previous hash
-        if block['timestamp'] <= self.last_block_time:
-            return False
-        if block['prev_hash'] != self.compute_hash(self.last_block):
-            return False
+    def update_swarm_state(self, agent_index, new_state):
+        self.swarm_state[agent_index] = new_state
+        self.last_update_time = time.time()
 
-        # Validate block proposer
-        if block['proposer'] != self.address:
-            return False
+    def get_swarm_decision(self):
+        if time.time() - self.last_update_time > 60:
+            return None
 
-        # Update validator state
-        self.last_block_time = block['timestamp']
-        self.last_block = block
-        return True
+        positive_votes = sum(1 for state in self.swarm_state if state == 1)
+        negative_votes = sum(1 for state in self.swarm_state if state == 0)
 
-    def compute_hash(self, block):
-        block_string = str(block)
-        return hashlib.sha256(block_string.encode()).hexdigest()
-
-class ConsensusManager:
-    def __init__(self):
-        self.validators = []
-        self.chain = []
-
-    def add_validator(self, validator):
-        self.validators.append(validator)
-
-    def propose_block(self):
-        # Select a validator to propose the next block
-        validator = random.choice(self.validators)
-
-        # Create the new block
-        block = {
-            'timestamp': time.time(),
-            'proposer': validator.address,
-            'transactions': [],
-            'prev_hash': self.compute_hash(self.chain[-1])
-        }
-
-        # Validate the block
-        if validator.validate_block(block):
-            self.chain.append(block)
-            return block
+        if positive_votes >= self.decision_threshold:
+            return 1
+        elif negative_votes >= self.decision_threshold:
+            return 0
         else:
             return None
 
-    def compute_hash(self, block):
-        block_string = str(block)
-        return hashlib.sha256(block_string.encode()).hexdigest()
+    def simulate_swarm_behavior(self):
+        while True:
+            agent_index = random.randint(0, self.swarm_size - 1)
+            new_state = random.randint(0, 1)
+            self.update_swarm_state(agent_index, new_state)
+            swarm_decision = self.get_swarm_decision()
+            if swarm_decision is not None:
+                print(f'Swarm decision: {swarm_decision}')
+                break
+            time.sleep(1)
