@@ -1,108 +1,105 @@
+# Byzantine Fault Tolerant Consensus Implementation for SwarmLedger
+import time
+from typing import Dict, List, Set
 import hashlib
-from typing import Dict, List, Set, Tuple
 from dataclasses import dataclass
-from time import time
+from enum import Enum
 
+class VoteType(Enum):
+    PREPARE = 1
+    COMMIT = 2
+    
 @dataclass
 class Vote:
-    proposal_id: str
-    voter_id: str
-    weight: float
+    node_id: str
+    proposal_hash: str
     timestamp: float
+    vote_type: VoteType
     signature: str
+    weight: float
 
-@dataclass 
-class Proposal:
-    id: str
-    content: dict
-    timestamp: float
-    proposer: str
-
-class ByzantineConsensus:
-    def __init__(self, node_id: str, voting_weights: Dict[str, float]):
+class BFTConsensus:
+    def __init__(self, node_id: str, total_nodes: int, required_quorum: float = 0.67):
         self.node_id = node_id
-        self.voting_weights = voting_weights
-        self.proposals: Dict[str, Proposal] = {}
-        self.votes: Dict[str, Set[Vote]] = {}
-        self.decided_proposals: Set[str] = set()
-        self.quorum_threshold = 0.67
-
-    def create_proposal(self, content: dict) -> Proposal:
-        """Create a new proposal to be voted on"""
-        proposal_id = hashlib.sha256(
-            f"{content}{time()}{self.node_id}".encode()
-        ).hexdigest()
+        self.total_nodes = total_nodes
+        self.required_quorum = required_quorum
+        self.proposals: Dict[str, any] = {}
+        self.prepare_votes: Dict[str, Set[Vote]] = {}
+        self.commit_votes: Dict[str, Set[Vote]] = {}
+        self.finalized_proposals: Set[str] = set()
+        self.node_weights: Dict[str, float] = {}
+    
+    def set_node_weights(self, weights: Dict[str, float]) -> None:
+        """Set voting weights for nodes based on reputation/stake"""
+        self.node_weights = weights
         
-        proposal = Proposal(
-            id=proposal_id,
-            content=content,
-            timestamp=time(),
-            proposer=self.node_id
-        )
-        
-        self.proposals[proposal_id] = proposal
-        self.votes[proposal_id] = set()
-        return proposal
+    def propose(self, proposal: any) -> str:
+        """Create a new proposal for consensus"""
+        proposal_hash = hashlib.sha256(str(proposal).encode()).hexdigest()
+        self.proposals[proposal_hash] = proposal
+        self.prepare_votes[proposal_hash] = set()
+        self.commit_votes[proposal_hash] = set()
+        return proposal_hash
 
-    def vote(self, proposal_id: str) -> Vote:
+    def vote(self, proposal_hash: str, vote_type: VoteType) -> Vote:
         """Cast a vote for a proposal"""
-        if proposal_id not in self.proposals:
-            raise ValueError(f"Unknown proposal {proposal_id}")
+        if proposal_hash not in self.proposals:
+            raise ValueError('Unknown proposal')
             
         vote = Vote(
-            proposal_id=proposal_id,
-            voter_id=self.node_id,
-            weight=self.voting_weights.get(self.node_id, 0),
-            timestamp=time(),
-            signature=self._sign_vote(proposal_id)
+            node_id=self.node_id,
+            proposal_hash=proposal_hash,
+            timestamp=time.time(),
+            vote_type=vote_type,
+            signature=self._sign_vote(proposal_hash, vote_type),
+            weight=self.node_weights.get(self.node_id, 1.0)
         )
         
-        self.votes[proposal_id].add(vote)
+        if vote_type == VoteType.PREPARE:
+            self.prepare_votes[proposal_hash].add(vote)
+        else:
+            self.commit_votes[proposal_hash].add(vote)
+            
         return vote
 
-    def receive_vote(self, vote: Vote) -> bool:
-        """Process a vote received from another node"""
+    def receive_vote(self, vote: Vote) -> None:
+        """Process received vote from another node"""
         if not self._verify_vote(vote):
-            return False
+            raise ValueError('Invalid vote signature')
             
-        if vote.proposal_id not in self.votes:
-            self.votes[vote.proposal_id] = set()
+        if vote.vote_type == VoteType.PREPARE:
+            self.prepare_votes[vote.proposal_hash].add(vote)
+        else:
+            self.commit_votes[vote.proposal_hash].add(vote)
+
+    def check_consensus(self, proposal_hash: str) -> bool:
+        """Check if consensus has been reached for a proposal"""
+        if proposal_hash in self.finalized_proposals:
+            return True
             
-        self.votes[vote.proposal_id].add(vote)
-        return True
-
-    def is_decided(self, proposal_id: str) -> Tuple[bool, bool]:
-        """Check if a proposal has reached consensus
-        Returns: (is_decided, accepted)"""
-        if proposal_id not in self.proposals:
-            return False, False
+        prepare_weight = sum(v.weight for v in self.prepare_votes[proposal_hash])
+        commit_weight = sum(v.weight for v in self.commit_votes[proposal_hash])
+        
+        total_weight = sum(self.node_weights.values())
+        quorum_weight = total_weight * self.required_quorum
+        
+        if prepare_weight >= quorum_weight and commit_weight >= quorum_weight:
+            self.finalized_proposals.add(proposal_hash)
+            return True
             
-        if proposal_id in self.decided_proposals:
-            return True, True
+        return False
 
-        total_weight = 0
-        for vote in self.votes[proposal_id]:
-            total_weight += vote.weight
+    def get_proposal(self, proposal_hash: str) -> any:
+        """Retrieve a proposal by its hash"""
+        return self.proposals.get(proposal_hash)
 
-        if total_weight >= sum(self.voting_weights.values()) * self.quorum_threshold:
-            self.decided_proposals.add(proposal_id)
-            return True, True
-
-        return False, False
-
-    def _sign_vote(self, proposal_id: str) -> str:
-        """Create signature for a vote"""
-        return hashlib.sha256(
-            f"{proposal_id}{self.node_id}{time()}".encode()
-        ).hexdigest()
+    def _sign_vote(self, proposal_hash: str, vote_type: VoteType) -> str:
+        """Sign a vote with the node's private key"""
+        # TODO: Implement actual cryptographic signing
+        return f'{self.node_id}:{proposal_hash}:{vote_type.value}'
 
     def _verify_vote(self, vote: Vote) -> bool:
-        """Verify vote signature and weight"""
-        if vote.voter_id not in self.voting_weights:
-            return False
-            
-        if vote.weight != self.voting_weights[vote.voter_id]:
-            return False
-            
-        # In production, verify cryptographic signature here
-        return True
+        """Verify a vote's signature"""
+        # TODO: Implement actual signature verification
+        expected = f'{vote.node_id}:{vote.proposal_hash}:{vote.vote_type.value}'
+        return vote.signature == expected
